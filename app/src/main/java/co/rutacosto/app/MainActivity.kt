@@ -15,8 +15,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.util.Locale
 import java.util.concurrent.Executors
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 class MainActivity : Activity() {
@@ -83,23 +85,27 @@ class MainActivity : Activity() {
             status.text = "Revisa consumo y precio del combustible."
             return
         }
-        if (BuildConfig.ROUTES_API_KEY.isBlank()) {
-            status.text = "Falta configurar la clave de Google Routes API."
-            result.text = "La app ya tiene integrada la consulta de rutas reales. La clave se añadirá de forma segura en la compilación."
+        if (BuildConfig.ORS_API_KEY.isBlank()) {
+            status.text = "Falta configurar la clave gratuita de OpenRouteService."
+            result.text = "La integración ya está preparada. Crea una cuenta en openrouteservice.org y guarda la clave como secreto ORS_API_KEY en GitHub para compilar la app."
             return
         }
-        status.text = "Calculando rutas reales…"
-        result.text = "Consultando distancia, tiempo y peajes."
+        status.text = "Buscando lugares y calculando rutas…"
+        result.text = "Consultando OpenRouteService. Esto puede tardar unos segundos."
         executor.execute {
             try {
-                val response = requestRoutes(from, to)
-                val routes = parseRoutes(response)
+                val start = geocode(from)
+                val end = geocode(to)
+                val candidates = listOf("fastest", "recommended", "shortest").mapNotNull { preference ->
+                    try { requestRoute(start, end, preference) } catch (_: Exception) { null }
+                }
+                val routes = deduplicate(candidates)
                 runOnUiThread {
                     if (routes.isEmpty()) {
                         status.text = "No se encontraron rutas."
-                        result.text = "Prueba con nombres de ciudades o direcciones más precisas."
+                        result.text = "Comprueba los nombres de origen y destino o intenta con una dirección más precisa."
                     } else {
-                        status.text = "${routes.size} rutas encontradas"
+                        status.text = "${routes.size} opción(es) de ruta calculada(s)"
                         result.text = routes.mapIndexed { index, route ->
                             formatRoute(index, route, kmPerGallon, price)
                         }.joinToString("\n\n")
@@ -108,83 +114,126 @@ class MainActivity : Activity() {
             } catch (e: Exception) {
                 runOnUiThread {
                     status.text = "No fue posible calcular la ruta."
-                    result.text = e.message ?: "Error de conexión."
+                    result.text = e.message ?: "Error de conexión. Revisa internet y la clave de OpenRouteService."
                 }
             }
         }
     }
 
-    private fun requestRoutes(from: String, to: String): String {
-        val connection = URL("https://routes.googleapis.com/directions/v2:computeRoutes").openConnection() as HttpURLConnection
-        connection.requestMethod = "POST"
-        connection.connectTimeout = 15000
-        connection.readTimeout = 20000
-        connection.doOutput = true
-        connection.setRequestProperty("Content-Type", "application/json")
-        connection.setRequestProperty("X-Goog-Api-Key", BuildConfig.ROUTES_API_KEY)
-        connection.setRequestProperty(
-            "X-Goog-FieldMask",
-            "routes.distanceMeters,routes.duration,routes.routeLabels,routes.travelAdvisory.tollInfo,routes.legs.steps.navigationInstruction.instructions"
+    private data class Coordinates(val longitude: Double, val latitude: Double, val label: String)
+
+    private fun geocode(query: String): Coordinates {
+        val coordinateMatch = Regex("^\\s*(-?\\d+(?:[.,]\\d+)?)\\s*[,;]\\s*(-?\\d+(?:[.,]\\d+)?)\\s*$").matchEntire(query)
+        if (coordinateMatch != null) {
+            val first = coordinateMatch.groupValues[1].replace(",", ".").toDouble()
+            val second = coordinateMatch.groupValues[2].replace(",", ".").toDouble()
+            // The location button fills latitude, longitude. Also accept common longitude, latitude order.
+            val latitude: Double
+            val longitude: Double
+            if (abs(first) <= 90 && abs(second) <= 180) {
+                latitude = first
+                longitude = second
+            } else {
+                longitude = first
+                latitude = second
+            }
+            if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) {
+                throw IllegalArgumentException("Las coordenadas no son válidas.")
+            }
+            return Coordinates(longitude, latitude, query)
+        }
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        val json = requestText(
+            "https://api.openrouteservice.org/geocode/search?text=$encoded&boundary.country=CO&size=1",
+            "GET",
+            null
         )
-
-        val body = JSONObject()
-            .put("origin", JSONObject().put("address", from))
-            .put("destination", JSONObject().put("address", to))
-            .put("travelMode", "DRIVE")
-            .put("routingPreference", "TRAFFIC_AWARE")
-            .put("computeAlternativeRoutes", true)
-            .put("routeModifiers", JSONObject().put("vehicleInfo", JSONObject().put("emissionType", "GASOLINE")))
-            .put("extraComputations", JSONArray().put("TOLLS"))
-            .put("languageCode", "es-CO")
-            .put("units", "METRIC")
-
-        connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-        val code = connection.responseCode
-        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-        val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-        connection.disconnect()
-        if (code !in 200..299) throw IllegalStateException("Google Routes API ($code): $text")
-        return text
+        val features = JSONObject(json).optJSONArray("features")
+        if (features == null || features.length() == 0) {
+            throw IllegalArgumentException("No encontré el lugar: $query. Prueba con ciudad y departamento.")
+        }
+        val feature = features.getJSONObject(0)
+        val coords = feature.getJSONObject("geometry").getJSONArray("coordinates")
+        return Coordinates(coords.getDouble(0), coords.getDouble(1), feature.optJSONObject("properties")?.optString("label").orEmpty().ifBlank { query })
     }
 
     private data class RouteData(
+        val preference: String,
         val distanceKm: Double,
-        val durationSeconds: Long,
-        val tollCop: Double,
+        val durationSeconds: Double,
         val instructions: List<String>
     )
 
-    private fun parseRoutes(json: String): List<RouteData> {
-        val routes = JSONObject(json).optJSONArray("routes") ?: return emptyList()
+    private fun requestRoute(start: Coordinates, end: Coordinates, preference: String): RouteData? {
+        val coordinates = JSONArray()
+            .put(JSONArray().put(start.longitude).put(start.latitude))
+            .put(JSONArray().put(end.longitude).put(end.latitude))
+        val body = JSONObject()
+            .put("coordinates", coordinates)
+            .put("preference", preference)
+            .put("units", "km")
+            .put("language", "es")
+            .put("instructions", true)
+        val json = requestText(
+            "https://api.openrouteservice.org/v2/directions/driving-car/json",
+            "POST",
+            body.toString()
+        )
+        val routes = JSONObject(json).optJSONArray("routes") ?: return null
+        if (routes.length() == 0) return null
+        val route = routes.getJSONObject(0)
+        val summary = route.optJSONObject("summary") ?: return null
+        val segments = route.optJSONArray("segments")
+        val instructions = mutableListOf<String>()
+        if (segments != null) {
+            for (i in 0 until segments.length()) {
+                val steps = segments.getJSONObject(i).optJSONArray("steps") ?: continue
+                for (j in 0 until steps.length()) {
+                    val instruction = steps.getJSONObject(j).optString("instruction").trim()
+                    if (instruction.isNotBlank()) instructions.add(instruction)
+                    if (instructions.size >= 8) break
+                }
+                if (instructions.size >= 8) break
+            }
+        }
+        return RouteData(preference, summary.optDouble("distance", 0.0), summary.optDouble("duration", 0.0), instructions)
+    }
+
+    private fun requestText(url: String, method: String, body: String?): String {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = method
+            connection.connectTimeout = 15000
+            connection.readTimeout = 25000
+            connection.setRequestProperty("Authorization", BuildConfig.ORS_API_KEY)
+            connection.setRequestProperty("Accept", "application/json")
+            if (body != null) {
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            }
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) {
+                val detail = try { JSONObject(text).optJSONObject("error")?.optString("message") ?: text } catch (_: Exception) { text }
+                throw IllegalStateException("OpenRouteService ($code): $detail")
+            }
+            return text
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun deduplicate(candidates: List<RouteData>): List<RouteData> {
         val result = mutableListOf<RouteData>()
-        for (i in 0 until routes.length()) {
-            val route = routes.getJSONObject(i)
-            val distanceKm = route.optDouble("distanceMeters", 0.0) / 1000.0
-            val durationSeconds = parseDurationSeconds(route.optString("duration"))
-            val tollInfo = route.optJSONObject("travelAdvisory")?.optJSONObject("tollInfo")
-            val tollPrices = tollInfo?.optJSONArray("estimatedPrice")
-            var tollCop = 0.0
-            if (tollPrices != null) {
-                for (j in 0 until tollPrices.length()) {
-                    val price = tollPrices.getJSONObject(j)
-                    if (price.optString("currencyCode") == "COP") {
-                        tollCop += price.optDouble("units", 0.0)
-                        tollCop += price.optDouble("nanos", 0.0) / 1_000_000_000.0
-                    }
-                }
+        for (candidate in candidates.sortedBy { it.durationSeconds }) {
+            val duplicate = result.any {
+                val distanceDifference = abs(it.distanceKm - candidate.distanceKm) / maxOf(it.distanceKm, candidate.distanceKm, 1.0)
+                val durationDifference = abs(it.durationSeconds - candidate.durationSeconds) / maxOf(it.durationSeconds, candidate.durationSeconds, 1.0)
+                distanceDifference < 0.015 && durationDifference < 0.04
             }
-            val instructions = mutableListOf<String>()
-            val legs = route.optJSONArray("legs")
-            if (legs != null) {
-                for (l in 0 until legs.length()) {
-                    val steps = legs.getJSONObject(l).optJSONArray("steps") ?: continue
-                    for (s in 0 until minOf(steps.length(), 4)) {
-                        val instruction = steps.getJSONObject(s).optJSONObject("navigationInstruction")?.optString("instructions")?.trim()
-                        if (!instruction.isNullOrBlank()) instructions.add(instruction)
-                    }
-                }
-            }
-            result.add(RouteData(distanceKm, durationSeconds, tollCop, instructions))
+            if (!duplicate) result.add(candidate)
         }
         return result
     }
@@ -192,26 +241,26 @@ class MainActivity : Activity() {
     private fun formatRoute(index: Int, route: RouteData, kmPerGallon: Double, price: Double): String {
         val gallons = route.distanceKm / kmPerGallon
         val fuel = gallons * price
-        val total = fuel + route.tollCop
-        val minutes = route.durationSeconds / 60
+        val minutes = (route.durationSeconds / 60).roundToInt()
         val hours = minutes / 60
         val mins = minutes % 60
         val time = if (hours > 0) "${hours} h ${mins} min" else "${mins} min"
-        val label = when (index) {
-            0 -> "MÁS RÁPIDA / PRINCIPAL"
-            1 -> "ALTERNATIVA 1"
-            else -> "ALTERNATIVA ${index}"
+        val label = when {
+            index == 0 -> "MÁS RÁPIDA"
+            route.preference == "shortest" -> "MENOR DISTANCIA"
+            route.preference == "recommended" -> "RECOMENDADA"
+            else -> "ALTERNATIVA"
         }
         return buildString {
             append(label)
-            append("\nDistancia: ${String.format(Locale.US, "%.1f km", route.distanceKm)}")
+            append("\nDistancia: ${String.format(Locale("es", "CO"), "%.1f km", route.distanceKm)}")
             append("\nTiempo estimado: $time")
-            append("\nPeajes: ${money(route.tollCop)}")
-            append("\nCombustible: ${money(fuel)}")
-            append("\nCosto total: ${money(total)}")
-            append("\nCosto por km: ${money(if (route.distanceKm > 0) total / route.distanceKm else 0.0)}")
+            append("\nCombustible estimado: ${money(fuel)}")
+            append("\nPeajes: no incluidos; deben verificarse por separado")
+            append("\nTotal parcial sin peajes: ${money(fuel)}")
+            append("\nCosto por km sin peajes: ${money(if (route.distanceKm > 0) fuel / route.distanceKm else 0.0)}")
             if (route.instructions.isNotEmpty()) {
-                append("\nTrazado inicial:")
+                append("\nIndicaciones principales:")
                 route.instructions.forEachIndexed { instructionIndex, instruction ->
                     append("\n${instructionIndex + 1}. $instruction")
                 }
@@ -219,14 +268,22 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun parseDurationSeconds(value: String): Long =
-        value.removeSuffix("s").toDoubleOrNull()?.roundToInt()?.toLong() ?: 0L
+    private fun number(value: String): Double? {
+        val clean = value.trim().replace(" ", "")
+        if (clean.isEmpty()) return null
+        val normalized = when {
+            clean.contains(",") -> clean.replace(".", "").replace(",", ".")
+            Regex("^\\d{1,3}(?:\\.\\d{3})+$").matches(clean) -> clean.replace(".", "")
+            else -> clean
+        }
+        return normalized.toDoubleOrNull()
+    }
 
-    private fun number(value: String): Double? =
-        value.trim().replace(".", "").replace(",", ".").toDoubleOrNull()
-
-    private fun money(value: Double): String =
-        "$" + value.roundToInt().toString().reversed().chunked(3).joinToString(".").reversed()
+    private fun money(value: Double): String {
+        val rounded = value.roundToInt().toString()
+        val grouped = rounded.reversed().chunked(3).joinToString(".").reversed()
+        return "$$grouped COP"
+    }
 
     override fun onDestroy() {
         executor.shutdownNow()
