@@ -282,7 +282,7 @@ class MainActivity : Activity() {
     private fun money(value: Double): String {
         val rounded = value.roundToInt().toString()
         val grouped = rounded.reversed().chunked(3).joinToString(".").reversed()
-        return "$$grouped COP"
+        return "\\${grouped} COP"
     }
 
     override fun onDestroy() {
