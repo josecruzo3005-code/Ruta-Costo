@@ -16,6 +16,8 @@ jobs:
         with:
           gradle-version: "8.9"
       - run: gradle assembleDebug
+        env:
+          ROUTES_API_KEY: ${{ secrets.ROUTES_API_KEY }}
       - uses: actions/upload-artifact@v4
         with:
           name: RutaCosto-debug
