@@ -151,7 +151,7 @@ class MainActivity : Activity() {
         }
         val encoded = URLEncoder.encode(query, "UTF-8")
         val json = requestText(
-            "https://api.openrouteservice.org/geocode/search?text=$encoded&boundary.country=CO&size=1",
+            "https://api.heigit.org/pelias/v1/search?text=$encoded&boundary.country=CO&size=1",
             "GET",
             null
         )
@@ -182,7 +182,7 @@ class MainActivity : Activity() {
             .put("language", "es")
             .put("instructions", true)
         val json = requestText(
-            "https://api.openrouteservice.org/v2/directions/driving-car/json",
+            "https://api.heigit.org/openrouteservice/v2/directions/driving-car/json",
             "POST",
             body.toString()
         )
