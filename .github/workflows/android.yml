@@ -15,9 +15,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-      - run: gradle assembleDebug -PROUTES_API_KEY="$ROUTES_API_KEY"
+      - run: gradle assembleDebug -PORS_API_KEY="$ORS_API_KEY"
         env:
-          ROUTES_API_KEY: ${{ secrets.ROUTES_API_KEY }}
+          ORS_API_KEY: ${{ secrets.ORS_API_KEY }}
       - uses: actions/upload-artifact@v4
         with:
           name: RutaCosto-debug
