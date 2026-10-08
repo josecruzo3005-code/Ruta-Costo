@@ -12,7 +12,7 @@ android {
         versionCode = 2
         versionName = "0.2.0"
         val routesApiKey = project.findProperty("ROUTES_API_KEY")?.toString() ?: ""
-        buildConfigField("String", "ROUTES_API_KEY", "$\"$routesApiKey$\"")
+        buildConfigField("String", "ROUTES_API_KEY", "\\"$routesApiKey\\"")
     }
     buildFeatures { buildConfig = true }
     compileOptions {
