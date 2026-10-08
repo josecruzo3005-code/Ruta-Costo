@@ -96,10 +96,17 @@ class MainActivity : Activity() {
             try {
                 val start = geocode(from)
                 val end = geocode(to)
+                var lastRouteError: Exception? = null
                 val candidates = listOf("fastest", "recommended", "shortest").mapNotNull { preference ->
-                    try { requestRoute(start, end, preference) } catch (_: Exception) { null }
+                    try {
+                        requestRoute(start, end, preference)
+                    } catch (e: Exception) {
+                        lastRouteError = e
+                        null
+                    }
                 }
                 val routes = deduplicate(candidates)
+                if (routes.isEmpty() && lastRouteError != null) throw lastRouteError!!
                 runOnUiThread {
                     if (routes.isEmpty()) {
                         status.text = "No se encontraron rutas."
