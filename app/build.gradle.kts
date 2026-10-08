@@ -9,10 +9,10 @@ android {
         applicationId = "co.rutacosto.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
-        val routesApiKey = project.findProperty("ROUTES_API_KEY")?.toString() ?: ""
-        buildConfigField("String", "ROUTES_API_KEY", "\\"$routesApiKey\\"")
+        versionCode = 3
+        versionName = "0.3.0"
+        val orsApiKey = project.findProperty("ORS_API_KEY")?.toString() ?: ""
+        buildConfigField("String", "ORS_API_KEY", "\"$orsApiKey\"")
     }
     buildFeatures { buildConfig = true }
     compileOptions {
