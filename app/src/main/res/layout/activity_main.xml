@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="20dp">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="RUTACOSTO" android:textSize="28sp" android:textStyle="bold" android:paddingBottom="6dp"/>
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Calcula cuánto te cuesta realmente viajar" android:textSize="16sp" android:paddingBottom="20dp"/>
+        <EditText android:id="@+id/origin" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Origen" android:inputType="text"/>
+        <Button android:id="@+id/location_button" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Usar mi ubicación"/>
+        <EditText android:id="@+id/destination" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Destino" android:inputType="text"/>
+        <EditText android:id="@+id/distance" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Distancia (km)" android:inputType="numberDecimal"/>
+        <EditText android:id="@+id/consumption" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Consumo (km/galón)" android:inputType="numberDecimal"/>
+        <EditText android:id="@+id/fuel_price" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Precio combustible por galón (COP)" android:inputType="numberDecimal"/>
+        <EditText android:id="@+id/tolls" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Peajes (COP)" android:inputType="numberDecimal"/>
+        <Button android:id="@+id/calculate_button" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="CALCULAR VIAJE" android:layout_marginTop="14dp"/>
+        <TextView android:id="@+id/result" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Aquí aparecerá el resultado." android:textSize="18sp" android:paddingTop="20dp"/>
+    </LinearLayout>
+</ScrollView>
