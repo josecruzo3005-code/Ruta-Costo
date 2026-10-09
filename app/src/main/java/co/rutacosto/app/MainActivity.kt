@@ -9,6 +9,8 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
+import android.text.Editable
+import android.text.TextWatcher
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONArray
@@ -29,6 +31,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var result: TextView
     private val executor = Executors.newSingleThreadExecutor()
+    private val preferences by lazy { getSharedPreferences("rutacosto_settings", MODE_PRIVATE) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,8 +42,25 @@ class MainActivity : Activity() {
         fuelPrice = findViewById(R.id.fuel_price)
         status = findViewById(R.id.status)
         result = findViewById(R.id.result)
+
+        // Valores base recordados entre usos; ambos campos siguen siendo editables.
+        consumption.setText(preferences.getString("consumption_km_gallon", "35"))
+        fuelPrice.setText(preferences.getString("fuel_price_cop", ""))
+        rememberValue(consumption, "consumption_km_gallon")
+        rememberValue(fuelPrice, "fuel_price_cop")
+
         findViewById<Button>(R.id.location_button).setOnClickListener { requestLocation() }
         findViewById<Button>(R.id.calculate_button).setOnClickListener { calculateRoutes() }
+    }
+
+    private fun rememberValue(field: EditText, key: String) {
+        field.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                preferences.edit().putString(key, s?.toString().orEmpty()).apply()
+            }
+            override fun afterTextChanged(s: Editable?) = Unit
+        })
     }
 
     private fun requestLocation() {
