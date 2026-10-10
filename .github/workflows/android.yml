@@ -8,6 +8,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Conserva la misma firma entre compilaciones para permitir actualizar sin desinstalar.
+      - uses: actions/cache@v4
+        with:
+          path: .ci-signing/rutacosto.keystore
+          key: rutacosto-signing-keystore-v1
+      - name: Crear clave de firma si aún no existe
+        run: |
+          mkdir -p .ci-signing
+          if [ ! -f .ci-signing/rutacosto.keystore ]; then
+            keytool -genkeypair -alias rutacosto -keyalg RSA -keysize 2048 -validity 10000 \
+              -keystore .ci-signing/rutacosto.keystore \
+              -storepass rutacosto-local -keypass rutacosto-local \
+              -dname "CN=RutaCosto, OU=App, O=RutaCosto, L=Facatativa, ST=Cundinamarca, C=CO" -noprompt
+          fi
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
