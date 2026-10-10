@@ -44,8 +44,8 @@ class MainActivity : Activity() {
         result = findViewById(R.id.result)
 
         // Valores base recordados entre usos; ambos campos siguen siendo editables.
-        consumption.setText(preferences.getString("consumption_km_gallon", "35"))
-        fuelPrice.setText(preferences.getString("fuel_price_cop", ""))
+        consumption.setText(preferences.getString("consumption_km_gallon", "35").orEmpty().ifBlank { "35" })
+        fuelPrice.setText(preferences.getString("fuel_price_cop", "16000").orEmpty().ifBlank { "16000" })
         rememberValue(consumption, "consumption_km_gallon")
         rememberValue(fuelPrice, "fuel_price_cop")
 
