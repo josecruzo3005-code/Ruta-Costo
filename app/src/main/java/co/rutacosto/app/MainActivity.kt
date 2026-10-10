@@ -134,9 +134,10 @@ class MainActivity : Activity() {
                 val start = geocode(from)
                 val end = geocode(to)
                 var lastRouteError: Exception? = null
+                val tollStations = try { loadTollStations() } catch (_: Exception) { emptyList() }
                 val candidates = listOf("fastest", "recommended", "shortest").mapNotNull { preference ->
                     try {
-                        requestRoute(start, end, preference)
+                        requestRoute(start, end, preference, tollStations)
                     } catch (e: Exception) {
                         lastRouteError = e
                         null
@@ -201,14 +202,35 @@ class MainActivity : Activity() {
         return Coordinates(coords.getDouble(0), coords.getDouble(1), feature.optJSONObject("properties")?.optString("label").orEmpty().ifBlank { query })
     }
 
+    private data class TollStation(val name: String, val latitude: Double, val longitude: Double, val fareCop: Double, val sector: String)
+
     private data class RouteData(
         val preference: String,
         val distanceKm: Double,
         val durationSeconds: Double,
-        val instructions: List<String>
+        val instructions: List<String>,
+        val tollStations: List<TollStation> = emptyList(),
+        val tollDataAvailable: Boolean = false
     )
 
-    private fun requestRoute(start: Coordinates, end: Coordinates, preference: String): RouteData? {
+    private fun loadTollStations(): List<TollStation> {
+        val url = "https://hermes.invias.gov.co/arcgis/rest/services/OpenData/ServiciosOpenData1/FeatureServer/3/query?where=1%3D1&outFields=nombre,latsig,longsig,cat_1,sector&returnGeometry=false&f=json"
+        val json = JSONObject(requestText(url, "GET", null))
+        val features = json.optJSONArray("features") ?: throw IllegalStateException("La fuente oficial de peajes no devolvió datos.")
+        val stations = mutableListOf<TollStation>()
+        for (i in 0 until features.length()) {
+            val attrs = features.getJSONObject(i).optJSONObject("attributes") ?: continue
+            val name = attrs.optString("nombre").trim()
+            val lat = attrs.optDouble("latsig", Double.NaN)
+            val lon = attrs.optDouble("longsig", Double.NaN)
+            val fare = attrs.optDouble("cat_1", 0.0)
+            if (name.isNotBlank() && lat.isFinite() && lon.isFinite() && fare >= 0) stations.add(TollStation(name, lat, lon, fare, attrs.optString("sector")))
+        }
+        if (stations.isEmpty()) throw IllegalStateException("La fuente oficial de peajes no tiene registros válidos.")
+        return stations
+    }
+
+    private fun requestRoute(start: Coordinates, end: Coordinates, preference: String, tollStations: List<TollStation>): RouteData? {
         val coordinates = JSONArray()
             .put(JSONArray().put(start.longitude).put(start.latitude))
             .put(JSONArray().put(end.longitude).put(end.latitude))
@@ -240,7 +262,70 @@ class MainActivity : Activity() {
                 if (instructions.size >= 8) break
             }
         }
-        return RouteData(preference, summary.optDouble("distance", 0.0), summary.optDouble("duration", 0.0), instructions)
+        val routePoints = decodePolyline(route.optString("geometry"))
+        val detectedTolls = if (routePoints.isNotEmpty() && tollStations.isNotEmpty()) matchTolls(routePoints, tollStations) else emptyList()
+        return RouteData(preference, summary.optDouble("distance", 0.0), summary.optDouble("duration", 0.0), instructions, detectedTolls, tollStations.isNotEmpty())
+    }
+
+    private fun decodePolyline(encoded: String): List<Pair<Double, Double>> {
+        if (encoded.isBlank()) return emptyList()
+        val points = mutableListOf<Pair<Double, Double>>()
+        var index = 0
+        var lat = 0
+        var lon = 0
+        while (index < encoded.length) {
+            var result = 0
+            var shift = 0
+            var b: Int
+            do {
+                if (index >= encoded.length) return points
+                b = encoded[index++].code - 63
+                result = result or ((b and 0x1f) shl shift)
+                shift += 5
+            } while (b >= 0x20)
+            lat += if ((result and 1) != 0) (result shr 1).inv() else result shr 1
+            result = 0
+            shift = 0
+            do {
+                if (index >= encoded.length) return points
+                b = encoded[index++].code - 63
+                result = result or ((b and 0x1f) shl shift)
+                shift += 5
+            } while (b >= 0x20)
+            lon += if ((result and 1) != 0) (result shr 1).inv() else result shr 1
+            points.add((lat / 1e5) to (lon / 1e5))
+        }
+        return points
+    }
+
+    private fun matchTolls(routePoints: List<Pair<Double, Double>>, stations: List<TollStation>): List<TollStation> {
+        val matched = mutableListOf<TollStation>()
+        for (station in stations) {
+            var nearestMeters = Double.MAX_VALUE
+            for (i in 0 until routePoints.size - 1) {
+                val a = routePoints[i]
+                val b = routePoints[i + 1]
+                nearestMeters = minOf(nearestMeters, pointToSegmentMeters(station.latitude, station.longitude, a.first, a.second, b.first, b.second))
+                if (nearestMeters < 100.0) break
+            }
+            if (nearestMeters <= 250.0 && matched.none { it.name.equals(station.name, ignoreCase = true) }) matched.add(station)
+        }
+        return matched
+    }
+
+    private fun pointToSegmentMeters(lat: Double, lon: Double, lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val meanLat = Math.toRadians((lat + lat1 + lat2) / 3.0)
+        val scaleX = 111320.0 * kotlin.math.cos(meanLat)
+        val scaleY = 110540.0
+        val px = (lon - lon1) * scaleX
+        val py = (lat - lat1) * scaleY
+        val bx = (lon2 - lon1) * scaleX
+        val by = (lat2 - lat1) * scaleY
+        val lengthSquared = bx * bx + by * by
+        val t = if (lengthSquared == 0.0) 0.0 else ((px * bx + py * by) / lengthSquared).coerceIn(0.0, 1.0)
+        val dx = px - t * bx
+        val dy = py - t * by
+        return kotlin.math.sqrt(dx * dx + dy * dy)
     }
 
     private fun requestText(url: String, method: String, body: String?): String {
@@ -285,7 +370,9 @@ class MainActivity : Activity() {
     private fun formatRoute(index: Int, route: RouteData, kmPerGallon: Double, price: Double, toll: Double): String {
         val gallons = route.distanceKm / kmPerGallon
         val fuel = gallons * price
-        val total = fuel + toll
+        val officialTolls = route.tollStations.sumOf { it.fareCop }
+        val totalTolls = officialTolls + toll
+        val total = fuel + totalTolls
         val minutes = (route.durationSeconds / 60).roundToInt()
         val hours = minutes / 60
         val mins = minutes % 60
@@ -301,7 +388,14 @@ class MainActivity : Activity() {
             append("\nDistancia: ${String.format(Locale("es", "CO"), "%.1f km", route.distanceKm)}")
             append("\nTiempo estimado: $time")
             append("\nCombustible estimado: ${money(fuel)}")
-            append("\nPeajes ingresados para esta ruta: ${money(toll)}")
+            if (route.tollDataAvailable) {
+                append("\nPeajes detectados (tarifa oficial cat. I): ${money(officialTolls)}")
+                if (route.tollStations.isNotEmpty()) {
+                    append("\nPeajes identificados:")
+                    route.tollStations.forEach { station -> append("\n• ${station.name}: ${money(station.fareCop)}") }
+                } else append("\nNo se identificaron peajes oficiales cercanos a la línea de ruta.")
+            } else append("\nPeajes automáticos: no disponibles; no se sumaron tarifas inventadas.")
+            if (toll > 0) append("\nAjuste manual adicional: ${money(toll)}")
             append("\nCOSTO TOTAL ESTIMADO: ${money(total)}")
             append("\nCosto por km: ${money(if (route.distanceKm > 0) total / route.distanceKm else 0.0)}")
             if (route.instructions.isNotEmpty()) {
