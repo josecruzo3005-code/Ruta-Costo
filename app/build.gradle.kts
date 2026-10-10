@@ -14,6 +14,19 @@ android {
         val orsApiKey = project.findProperty("ORS_API_KEY")?.toString() ?: ""
         buildConfigField("String", "ORS_API_KEY", "\"$orsApiKey\"")
     }
+    signingConfigs {
+        create("persistentDebug") {
+            storeFile = rootProject.file(".ci-signing/rutacosto.keystore")
+            storePassword = "rutacosto-local"
+            keyAlias = "rutacosto"
+            keyPassword = "rutacosto-local"
+        }
+    }
+    buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("persistentDebug")
+        }
+    }
     buildFeatures { buildConfig = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
