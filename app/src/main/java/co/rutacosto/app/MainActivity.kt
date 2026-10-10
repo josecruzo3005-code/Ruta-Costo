@@ -332,7 +332,10 @@ class MainActivity : Activity() {
             connection.requestMethod = method
             connection.connectTimeout = 15000
             connection.readTimeout = 25000
-            connection.setRequestProperty("Authorization", BuildConfig.ORS_API_KEY)
+            // La clave de OpenRouteService solo se envía a sus endpoints.
+            if (url.contains("api.heigit.org/openrouteservice")) {
+                connection.setRequestProperty("Authorization", BuildConfig.ORS_API_KEY)
+            }
             connection.setRequestProperty("Accept", "application/json")
             if (body != null) {
                 connection.doOutput = true
