@@ -54,12 +54,6 @@ class MainActivity : Activity() {
         fuelPrice.setText(preferences.getString("fuel_price_cop", "16000").orEmpty().ifBlank { "16000" })
         rememberValue(consumption, "consumption_km_gallon")
         rememberValue(fuelPrice, "fuel_price_cop")
-        toll1.setText(preferences.getString("toll_route_1_cop", "0").orEmpty().ifBlank { "0" })
-        toll2.setText(preferences.getString("toll_route_2_cop", "0").orEmpty().ifBlank { "0" })
-        toll3.setText(preferences.getString("toll_route_3_cop", "0").orEmpty().ifBlank { "0" })
-        rememberValue(toll1, "toll_route_1_cop")
-        rememberValue(toll2, "toll_route_2_cop")
-        rememberValue(toll3, "toll_route_3_cop")
 
         findViewById<Button>(R.id.location_button).setOnClickListener { requestLocation() }
         findViewById<Button>(R.id.calculate_button).setOnClickListener { calculateRoutes() }
@@ -109,17 +103,12 @@ class MainActivity : Activity() {
         val to = destination.text.toString().trim()
         val kmPerGallon = number(consumption.text.toString())
         val price = number(fuelPrice.text.toString())
-        val tolls = listOf(toll1, toll2, toll3).map { number(it.text.toString()) }
         if (from.isBlank() || to.isBlank()) {
             status.text = "Falta el origen o el destino."
             return
         }
         if (kmPerGallon == null || kmPerGallon <= 0 || price == null || price < 0) {
             status.text = "Revisa consumo y precio del combustible."
-            return
-        }
-        if (tolls.any { it == null || it < 0 }) {
-            status.text = "Revisa los peajes: usa valores de cero o mayores."
             return
         }
         if (BuildConfig.ORS_API_KEY.isBlank()) {
@@ -150,9 +139,18 @@ class MainActivity : Activity() {
                         status.text = "No se encontraron rutas."
                         result.text = "Comprueba los nombres de origen y destino o intenta con una dirección más precisa."
                     } else {
+                        val tollFields = listOf(toll1, toll2, toll3)
+                        tollFields.forEachIndexed { index, field ->
+                            val route = routes.getOrNull(index)
+                            field.setText(when {
+                                route == null -> "—"
+                                !route.tollDataAvailable -> "No disponible"
+                                else -> money(route.tollStations.sumOf { it.fareCop })
+                            })
+                        }
                         status.text = "${routes.size} opción(es) de ruta calculada(s)"
                         result.text = routes.mapIndexed { index, route ->
-                            formatRoute(index, route, kmPerGallon, price, tolls[index] ?: 0.0)
+                            formatRoute(index, route, kmPerGallon, price)
                         }.joinToString("\n\n")
                     }
                 }
@@ -367,12 +365,11 @@ class MainActivity : Activity() {
         return result
     }
 
-    private fun formatRoute(index: Int, route: RouteData, kmPerGallon: Double, price: Double, toll: Double): String {
+    private fun formatRoute(index: Int, route: RouteData, kmPerGallon: Double, price: Double): String {
         val gallons = route.distanceKm / kmPerGallon
         val fuel = gallons * price
         val officialTolls = route.tollStations.sumOf { it.fareCop }
-        val totalTolls = officialTolls + toll
-        val total = fuel + totalTolls
+        val total = fuel + officialTolls
         val minutes = (route.durationSeconds / 60).roundToInt()
         val hours = minutes / 60
         val mins = minutes % 60
@@ -395,7 +392,6 @@ class MainActivity : Activity() {
                     route.tollStations.forEach { station -> append("\n• ${station.name}: ${money(station.fareCop)}") }
                 } else append("\nNo se identificaron peajes oficiales cercanos a la línea de ruta.")
             } else append("\nPeajes automáticos: no disponibles; no se sumaron tarifas inventadas.")
-            if (toll > 0) append("\nAjuste manual adicional: ${money(toll)}")
             append("\nCOSTO TOTAL ESTIMADO: ${money(total)}")
             append("\nCosto por km: ${money(if (route.distanceKm > 0) total / route.distanceKm else 0.0)}")
             if (route.instructions.isNotEmpty()) {
