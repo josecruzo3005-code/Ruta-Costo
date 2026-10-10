@@ -28,6 +28,9 @@ class MainActivity : Activity() {
     private lateinit var destination: EditText
     private lateinit var consumption: EditText
     private lateinit var fuelPrice: EditText
+    private lateinit var toll1: EditText
+    private lateinit var toll2: EditText
+    private lateinit var toll3: EditText
     private lateinit var status: TextView
     private lateinit var result: TextView
     private val executor = Executors.newSingleThreadExecutor()
@@ -40,6 +43,9 @@ class MainActivity : Activity() {
         destination = findViewById(R.id.destination)
         consumption = findViewById(R.id.consumption)
         fuelPrice = findViewById(R.id.fuel_price)
+        toll1 = findViewById(R.id.toll1)
+        toll2 = findViewById(R.id.toll2)
+        toll3 = findViewById(R.id.toll3)
         status = findViewById(R.id.status)
         result = findViewById(R.id.result)
 
@@ -48,6 +54,12 @@ class MainActivity : Activity() {
         fuelPrice.setText(preferences.getString("fuel_price_cop", "16000").orEmpty().ifBlank { "16000" })
         rememberValue(consumption, "consumption_km_gallon")
         rememberValue(fuelPrice, "fuel_price_cop")
+        toll1.setText(preferences.getString("toll_route_1_cop", "0").orEmpty().ifBlank { "0" })
+        toll2.setText(preferences.getString("toll_route_2_cop", "0").orEmpty().ifBlank { "0" })
+        toll3.setText(preferences.getString("toll_route_3_cop", "0").orEmpty().ifBlank { "0" })
+        rememberValue(toll1, "toll_route_1_cop")
+        rememberValue(toll2, "toll_route_2_cop")
+        rememberValue(toll3, "toll_route_3_cop")
 
         findViewById<Button>(R.id.location_button).setOnClickListener { requestLocation() }
         findViewById<Button>(R.id.calculate_button).setOnClickListener { calculateRoutes() }
@@ -97,12 +109,17 @@ class MainActivity : Activity() {
         val to = destination.text.toString().trim()
         val kmPerGallon = number(consumption.text.toString())
         val price = number(fuelPrice.text.toString())
+        val tolls = listOf(toll1, toll2, toll3).map { number(it.text.toString()) }
         if (from.isBlank() || to.isBlank()) {
             status.text = "Falta el origen o el destino."
             return
         }
         if (kmPerGallon == null || kmPerGallon <= 0 || price == null || price < 0) {
             status.text = "Revisa consumo y precio del combustible."
+            return
+        }
+        if (tolls.any { it == null || it < 0 }) {
+            status.text = "Revisa los peajes: usa valores de cero o mayores."
             return
         }
         if (BuildConfig.ORS_API_KEY.isBlank()) {
@@ -134,7 +151,7 @@ class MainActivity : Activity() {
                     } else {
                         status.text = "${routes.size} opción(es) de ruta calculada(s)"
                         result.text = routes.mapIndexed { index, route ->
-                            formatRoute(index, route, kmPerGallon, price)
+                            formatRoute(index, route, kmPerGallon, price, tolls[index] ?: 0.0)
                         }.joinToString("\n\n")
                     }
                 }
@@ -265,9 +282,10 @@ class MainActivity : Activity() {
         return result
     }
 
-    private fun formatRoute(index: Int, route: RouteData, kmPerGallon: Double, price: Double): String {
+    private fun formatRoute(index: Int, route: RouteData, kmPerGallon: Double, price: Double, toll: Double): String {
         val gallons = route.distanceKm / kmPerGallon
         val fuel = gallons * price
+        val total = fuel + toll
         val minutes = (route.durationSeconds / 60).roundToInt()
         val hours = minutes / 60
         val mins = minutes % 60
@@ -283,9 +301,9 @@ class MainActivity : Activity() {
             append("\nDistancia: ${String.format(Locale("es", "CO"), "%.1f km", route.distanceKm)}")
             append("\nTiempo estimado: $time")
             append("\nCombustible estimado: ${money(fuel)}")
-            append("\nPeajes: no incluidos; deben verificarse por separado")
-            append("\nTotal parcial sin peajes: ${money(fuel)}")
-            append("\nCosto por km sin peajes: ${money(if (route.distanceKm > 0) fuel / route.distanceKm else 0.0)}")
+            append("\nPeajes ingresados para esta ruta: ${money(toll)}")
+            append("\nCOSTO TOTAL ESTIMADO: ${money(total)}")
+            append("\nCosto por km: ${money(if (route.distanceKm > 0) total / route.distanceKm else 0.0)}")
             if (route.instructions.isNotEmpty()) {
                 append("\nIndicaciones principales:")
                 route.instructions.forEachIndexed { instructionIndex, instruction ->
