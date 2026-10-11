@@ -3,25 +3,22 @@ on:
   push:
     branches: ["main"]
   workflow_dispatch:
+concurrency:
+  group: rutacosto-android-build
+  cancel-in-progress: false
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Conserva la misma firma entre compilaciones para permitir actualizar sin desinstalar.
+      # No generar otra firma: la caché debe existir y restaurarse.
       - uses: actions/cache@v4
         with:
           path: .ci-signing/rutacosto.keystore
           key: rutacosto-signing-keystore-v1
-      - name: No Crear clave de firma si aún no existe manteener
-        run: |
-          mkdir -p .ci-signing
-          if [ ! -f .ci-signing/rutacosto.keystore ]; then
-            keytool -genkeypair -alias rutacosto -keyalg RSA -keysize 2048 -validity 10000 \
-              -keystore .ci-signing/rutacosto.keystore \
-              -storepass rutacosto-local -keypass rutacosto-local \
-              -dname "CN=RutaCosto, OU=App, O=RutaCosto, L=Facatativa, ST=Cundinamarca, C=CO" -noprompt
-          fi
+          fail-on-cache-miss: true
+      - name: Verificar clave de firma persistente
+        run: test -s .ci-signing/rutacosto.keystore
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
