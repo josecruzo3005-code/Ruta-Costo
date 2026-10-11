@@ -13,7 +13,7 @@ jobs:
         with:
           path: .ci-signing/rutacosto.keystore
           key: rutacosto-signing-keystore-v1
-      - name: NoCrear clave de firma si aún no existe manteener
+      - name: No Crear clave de firma si aún no existe manteener
         run: |
           mkdir -p .ci-signing
           if [ ! -f .ci-signing/rutacosto.keystore ]; then
